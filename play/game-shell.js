@@ -4,11 +4,22 @@
   const progress = document.getElementById("loading-progress");
   const reload = document.getElementById("reload-game");
   const gameKeyCodes = new Set(["ArrowLeft", "ArrowRight", "Space", "KeyA", "KeyD", "KeyS", "KeyI", "KeyR", "Escape"]);
+  let bootFinished = false;
+  const slowBootNotice = window.setTimeout(() => {
+    if (!bootFinished) {
+      status.textContent = "首次載入正在下載遊戲資料，請保持此頁面開啟。";
+    }
+  }, 6000);
+  const finishBootNotice = () => {
+    bootFinished = true;
+    window.clearTimeout(slowBootNotice);
+  };
   const focusCanvas = () => {
     canvas.tabIndex = 0;
     canvas.focus({ preventScroll: true });
   };
   const fail = () => {
+    finishBootNotice();
     status.textContent = "遊戲載入失敗，請重新載入。";
     reload.hidden = false;
   };
@@ -49,6 +60,7 @@
         status.textContent = `遊戲載入中 ${percent}%`;
       },
     }).then(() => {
+      finishBootNotice();
       document.getElementById("loading-panel").hidden = true;
       focusCanvas();
     }).catch(fail);
