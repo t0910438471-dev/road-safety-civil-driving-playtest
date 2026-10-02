@@ -97,6 +97,9 @@
       const manifest = await response.json();
       window.clearTimeout(initializationTimer);
       const total = manifest.files.reduce((sum, file) => sum + RoadBootDownload.getDownloadSize(file), 0);
+      if (manifest.stages) RoadStageDownload.configure(engine, manifest.stages, {
+        baseURL: new URL(window.ROAD_RAGE_BOOT_MANIFEST, location.href).href,
+      });
       await RoadBootDownload.bootEngine(engine, config, manifest, {
         baseURL: new URL(window.ROAD_RAGE_BOOT_MANIFEST, location.href).href,
         signal: controller.signal,
