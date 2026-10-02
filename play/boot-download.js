@@ -63,8 +63,8 @@
             job.buffer.set(bytes, job.offset); committed += job.size; onProgress(committed);
             break;
           } catch (error) {
-            if (attempt === attempts || stop.signal.aborted) throw error;
-            onRetry({ name: job.name, attempt, reason: error.message });
+            if (attempt === attempts || stop.signal.aborted) throw new Error(`${job.name} at ${job.offset}: ${error.message}`, { cause: error });
+            onRetry({ name: job.name, url: job.url, attempt, reason: error.message });
             await new Promise(resolve => setTimeout(resolve, retryDelayMs));
           }
         }

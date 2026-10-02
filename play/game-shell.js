@@ -25,6 +25,7 @@
   };
   const fail = (error) => {
     if (bootFinished) return;
+    console.error("遊戲啟動診斷", error);
     controller.abort();
     finishBootNotice();
     status.textContent = "遊戲尚未啟動";
@@ -82,7 +83,10 @@
           status.textContent = `下載遊戲資料 ${percent}%`;
           detail.textContent = `${(current / 1000000).toFixed(1)} / ${(total / 1000000).toFixed(1)} MB・請保持此頁面開啟`;
         },
-        onRetry: () => { detail.textContent = "網路暫時中斷，正在重試該段資料，已完成進度會保留。"; },
+        onRetry: ({ name, url, attempt, reason }) => {
+          console.warn("遊戲下載重試", name, url, attempt, reason);
+          detail.textContent = "網路暫時中斷，正在重試該段資料，已完成進度會保留。";
+        },
       });
       if (controller.signal.aborted) throw new Error("aborted");
       status.textContent = "資料下載完成，正在啟動遊戲";
