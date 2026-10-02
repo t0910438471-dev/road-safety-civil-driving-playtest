@@ -89,7 +89,44 @@
     };
     try { return await action(); } finally { root.fetch = original; }
   }
-  const api = { downloadFiles, withWasmResponse };
+  async function bootEngine(engine, config, manifest, options = {}) {
+    const wasm = manifest.files?.find(file => file.name === 'index.wasm');
+    const packFile = manifest.files?.find(file => file.name === 'index.pck');
+    if (manifest.files?.length !== 2 || !wasm || !packFile) throw new Error('invalid boot manifest');
+    const phase = options.onPhase || (() => {});
+    const report = options.onProgress || (() => {});
+    const checkAbort = () => { if (options.signal?.aborted) throw aborted(); };
+    phase('download-engine');
+    const wasmBytes = await downloadFiles([wasm], { ...options, onProgress: report });
+    try {
+      checkAbort();
+      phase('initialize');
+      let cancelInitialization;
+      const interrupted = new Promise((resolve, reject) => {
+        cancelInitialization = () => reject(aborted());
+        options.signal?.addEventListener('abort', cancelInitialization, { once: true });
+      });
+      try {
+        await withWasmResponse(`${config.executable}.wasm`, wasmBytes.get(wasm.name), () => Promise.race([engine.init(config.executable), interrupted]));
+      } finally { options.signal?.removeEventListener('abort', cancelInitialization); }
+    } finally { wasmBytes.clear(); }
+    checkAbort();
+    // Do not retain a whole PCK while compiling/initializing the runtime.
+    phase('download-game');
+    const packBytes = await downloadFiles([packFile], { ...options, onProgress: n => report(wasm.size + n) });
+    const pack = config.mainPack || `${config.executable}.pck`;
+    try {
+      checkAbort();
+      phase('install');
+      // Actual GodotFS wraps this in new Uint8Array(buffer). An ArrayBuffer is
+      // a view there; a TypedArray would clone the entire pack once more.
+      engine.copyToFS(pack, packBytes.get(packFile.name).buffer);
+    } finally { packBytes.clear(); }
+    checkAbort();
+    phase('start');
+    await engine.start({ canvas: options.canvas, args: ['--main-pack', pack, ...(config.args || [])] });
+  }
+  const api = { downloadFiles, withWasmResponse, bootEngine };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RoadBootDownload = api;
 })(globalThis);

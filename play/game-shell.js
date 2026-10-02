@@ -74,9 +74,26 @@
       const manifest = await response.json();
       window.clearTimeout(initializationTimer);
       const total = manifest.files.reduce((sum, file) => sum + file.size, 0);
-      const bytes = await RoadBootDownload.downloadFiles(manifest.files, {
+      await RoadBootDownload.bootEngine(engine, config, manifest, {
         baseURL: new URL(window.ROAD_RAGE_BOOT_MANIFEST, location.href).href,
         signal: controller.signal,
+        canvas,
+        onPhase: phase => {
+          window.clearTimeout(initializationTimer);
+          const labels = {
+            'download-engine': '正在下載遊戲引擎',
+            initialize: '正在初始化遊戲引擎',
+            'download-game': '正在下載遊戲內容',
+            install: '正在準備遊戲內容',
+            start: '正在開啟遊戲畫面',
+          };
+          status.textContent = labels[phase];
+          detail.textContent = '採分階段載入，降低手機啟動時的記憶體負擔。請保持此頁面開啟。';
+          if (!phase.startsWith('download')) {
+            progress.removeAttribute('value');
+            initializationTimer = window.setTimeout(() => fail(new Error('initialization timeout')), 180000);
+          }
+        },
         onProgress: current => {
           const percent = Math.floor(current * 100 / total);
           progress.value = percent;
@@ -88,24 +105,6 @@
           detail.textContent = "網路暫時中斷，正在重試該段資料，已完成進度會保留。";
         },
       });
-      if (controller.signal.aborted) throw new Error("aborted");
-      status.textContent = "資料下載完成，正在啟動遊戲";
-      detail.textContent = "首次啟動需要初始化，請稍候。";
-      progress.removeAttribute("value");
-      initializationTimer = window.setTimeout(() => fail(new Error("initialization timeout")), 180000);
-      const pack = config.mainPack || `${config.executable}.pck`;
-      await engine.preloadFile(bytes.get("index.pck"), pack);
-      let cancelInitialization;
-      const initializationAborted = new Promise((resolve, reject) => {
-        cancelInitialization = () => reject(new Error("aborted"));
-        controller.signal.addEventListener("abort", cancelInitialization, { once: true });
-      });
-      try {
-        await RoadBootDownload.withWasmResponse(`${config.executable}.wasm`, bytes.get("index.wasm"), () => Promise.race([engine.init(config.executable), initializationAborted]));
-      } finally { controller.signal.removeEventListener("abort", cancelInitialization); }
-      if (controller.signal.aborted) throw new Error("aborted");
-      await engine.start({ canvas, args: ["--main-pack", pack, ...(config.args || [])] });
-      bytes.clear();
       finishBootNotice();
       panel.hidden = true;
       document.body.classList.add("game-ready");
