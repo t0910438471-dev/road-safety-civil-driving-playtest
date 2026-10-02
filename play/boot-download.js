@@ -3,7 +3,7 @@
   const sha256 = async bytes => Array.from(new Uint8Array(await root.crypto.subtle.digest('SHA-256', bytes)), n => n.toString(16).padStart(2, '0')).join('');
   const aborted = () => new Error('aborted');
   async function downloadFiles(files, options = {}) {
-    const { baseURL = root.location?.href, concurrency = 4, idleMs = 30000, attempts = 3, retryDelayMs = 750, onProgress = () => {}, onRetry = () => {}, signal } = options;
+    const { baseURL = root.location?.href, concurrency = 4, idleMs = 90000, attempts = 3, retryDelayMs = 750, onProgress = () => {}, onRetry = () => {}, signal } = options;
     if (!Array.isArray(files) || !files.length || !Number.isInteger(concurrency) || concurrency < 1 || attempts < 1) throw new Error('invalid manifest/options');
     const output = new Map(), jobs = [];
     for (const file of files) {
