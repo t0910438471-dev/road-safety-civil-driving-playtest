@@ -7,7 +7,7 @@
   let bootFinished = false;
   const slowBootNotice = window.setTimeout(() => {
     if (!bootFinished) {
-      status.textContent = "首次載入正在下載遊戲資料，請保持此頁面開啟。";
+      status.textContent = "正在下載或初始化遊戲資料，請保持此頁面開啟。";
     }
   }, 6000);
   const finishBootNotice = () => {
