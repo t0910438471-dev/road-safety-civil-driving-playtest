@@ -2,6 +2,46 @@
   'use strict';
   const sha256 = async bytes => Array.from(new Uint8Array(await root.crypto.subtle.digest('SHA-256', bytes)), n => n.toString(16).padStart(2, '0')).join('');
   const aborted = () => new Error('aborted');
+  const MAX_DECODED_PART = 1024 * 1024;
+  function gzipAvailable() {
+    try { if (typeof root.DecompressionStream !== 'function') return false; new root.DecompressionStream('gzip'); return true; } catch { return false; }
+  }
+  function selectedParts(file) {
+    if (!Array.isArray(file.parts) || !file.parts.length) throw new Error('invalid manifest');
+    if (file.parts.some(part => part.encoding === 'gzip') && !gzipAvailable()) {
+      if (!Array.isArray(file.fallbackParts) || !file.fallbackParts.length || file.fallbackParts.some(part => part.encoding)) throw new Error('invalid manifest fallback');
+      return file.fallbackParts;
+    }
+    return file.parts;
+  }
+  function getDownloadSize(file) {
+    return selectedParts(file).reduce((sum, part) => {
+      if (!Number.isSafeInteger(part.size) || part.size < 1) throw new Error('invalid manifest part');
+      return sum + part.size;
+    }, 0);
+  }
+  async function decodePart(bytes, job, signal) {
+    if (!job.encoding) return bytes;
+    const reader = new Response(bytes).body.pipeThrough(new root.DecompressionStream('gzip')).getReader();
+    const cancel = () => { reader.cancel().catch(() => {}); };
+    signal.addEventListener('abort', cancel, { once: true });
+    const decoded = new Uint8Array(job.decodedSize);
+    let received = 0;
+    try {
+      while (true) {
+        if (signal.aborted) throw aborted();
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (received + value.length > decoded.length) { await reader.cancel(); throw new Error('integrity decoded length'); }
+        decoded.set(value, received); received += value.length;
+      }
+      if (signal.aborted) throw aborted();
+      if (received !== decoded.length || await sha256(decoded) !== job.decodedSha256.toLowerCase()) throw new Error('integrity decoded hash/length');
+      return decoded;
+    } catch (error) {
+      throw new Error(`integrity decode: ${error.message}`, { cause: error });
+    } finally { signal.removeEventListener('abort', cancel); reader.releaseLock(); }
+  }
   async function downloadFiles(files, options = {}) {
     const { baseURL = root.location?.href, concurrency = 4, idleMs = 90000, attempts = 3, retryDelayMs = 750, onProgress = () => {}, onRetry = () => {}, signal } = options;
     if (!Array.isArray(files) || !files.length || !Number.isInteger(concurrency) || concurrency < 1 || attempts < 1) throw new Error('invalid manifest/options');
@@ -9,12 +49,15 @@
     for (const file of files) {
       if (output.has(file.name) || !Number.isSafeInteger(file.size) || file.size < 1 || !/^[a-f0-9]{64}$/i.test(file.sha256) || !Array.isArray(file.parts) || !file.parts.length) throw new Error('invalid manifest');
       let offset = 0;
-      const buffer = new Uint8Array(file.size);
-      for (const part of file.parts) {
+      const parts = selectedParts(file), pending = [];
+      for (const part of parts) {
         if (!Number.isSafeInteger(part.size) || part.size < 1 || !/^[a-f0-9]{64}$/i.test(part.sha256) || typeof part.url !== 'string') throw new Error('invalid manifest part');
-        jobs.push({ ...part, buffer, offset, name: file.name }); offset += part.size;
+        if (part.encoding && (part.encoding !== 'gzip' || !Number.isSafeInteger(part.decodedSize) || part.decodedSize < 1 || part.decodedSize > MAX_DECODED_PART || part.size > MAX_DECODED_PART + 65536 || !/^[a-f0-9]{64}$/i.test(part.decodedSha256))) throw new Error('invalid manifest encoding/bounds');
+        pending.push({ ...part, offset, name: file.name }); offset += part.encoding ? part.decodedSize : part.size;
       }
       if (offset !== file.size) throw new Error('invalid manifest length');
+      const buffer = new Uint8Array(file.size);
+      for (const job of pending) jobs.push({ ...job, buffer });
       output.set(file.name, buffer);
     }
     const stop = new AbortController();
@@ -45,7 +88,7 @@
         }
         clearTimeout(timer);
         if (received !== job.size || (await sha256(bytes)) !== job.sha256.toLowerCase()) throw new Error('integrity hash/length');
-        return bytes;
+        return await decodePart(bytes, job, stop.signal);
       } catch (error) {
         if (stop.signal.aborted) throw aborted();
         if (timedOut) throw new Error('download timeout');
@@ -95,6 +138,7 @@
     if (manifest.files?.length !== 2 || !wasm || !packFile) throw new Error('invalid boot manifest');
     const phase = options.onPhase || (() => {});
     const report = options.onProgress || (() => {});
+    const wasmTransferSize = getDownloadSize(wasm);
     const checkAbort = () => { if (options.signal?.aborted) throw aborted(); };
     phase('download-engine');
     const wasmBytes = await downloadFiles([wasm], { ...options, onProgress: report });
@@ -113,7 +157,7 @@
     checkAbort();
     // Do not retain a whole PCK while compiling/initializing the runtime.
     phase('download-game');
-    const packBytes = await downloadFiles([packFile], { ...options, onProgress: n => report(wasm.size + n) });
+    const packBytes = await downloadFiles([packFile], { ...options, onProgress: n => report(wasmTransferSize + n) });
     const pack = config.mainPack || `${config.executable}.pck`;
     try {
       checkAbort();
@@ -126,7 +170,7 @@
     phase('start');
     await engine.start({ canvas: options.canvas, args: ['--main-pack', pack, ...(config.args || [])] });
   }
-  const api = { downloadFiles, withWasmResponse, bootEngine };
+  const api = { downloadFiles, withWasmResponse, bootEngine, getDownloadSize };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RoadBootDownload = api;
 })(globalThis);

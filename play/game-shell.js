@@ -96,7 +96,7 @@
       if (!response.ok) throw new Error("manifest unavailable");
       const manifest = await response.json();
       window.clearTimeout(initializationTimer);
-      const total = manifest.files.reduce((sum, file) => sum + file.size, 0);
+      const total = manifest.files.reduce((sum, file) => sum + RoadBootDownload.getDownloadSize(file), 0);
       await RoadBootDownload.bootEngine(engine, config, manifest, {
         baseURL: new URL(window.ROAD_RAGE_BOOT_MANIFEST, location.href).href,
         signal: controller.signal,
