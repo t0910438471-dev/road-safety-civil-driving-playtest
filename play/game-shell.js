@@ -9,6 +9,29 @@
   let initializationTimer;
   const gameKeyCodes = new Set(["ArrowLeft", "ArrowRight", "Space", "KeyA", "KeyD", "KeyS", "KeyI", "KeyR", "Escape"]);
   let bootFinished = false;
+  let firstFrameWasDrawn = false;
+  let resolveFirstFrame;
+  window.addEventListener("road-game-first-frame", () => {
+    if (controller.signal.aborted) return;
+    firstFrameWasDrawn = true;
+    resolveFirstFrame?.();
+  }, { once: true });
+  const waitForFirstFrame = () => {
+    if (firstFrameWasDrawn) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        resolveFirstFrame = undefined;
+        reject(new Error("aborted"));
+      };
+      resolveFirstFrame = () => {
+        controller.signal.removeEventListener("abort", abort);
+        resolveFirstFrame = undefined;
+        resolve();
+      };
+      controller.signal.addEventListener("abort", abort, { once: true });
+      if (controller.signal.aborted) abort();
+    });
+  };
   const slowBootNotice = window.setTimeout(() => {
     if (!bootFinished) {
       detail.textContent = "正在下載或初始化遊戲資料，請保持此頁面開啟。";
@@ -105,6 +128,11 @@
           detail.textContent = "網路暫時中斷，正在重試該段資料，已完成進度會保留。";
         },
       });
+      status.textContent = "正在顯示遊戲首畫面";
+      detail.textContent = "遊戲資料已準備完成，正在建立主選單。請保持此頁面開啟。";
+      progress.removeAttribute("value");
+      await waitForFirstFrame();
+      if (controller.signal.aborted) throw new Error("aborted");
       finishBootNotice();
       panel.hidden = true;
       document.body.classList.add("game-ready");
